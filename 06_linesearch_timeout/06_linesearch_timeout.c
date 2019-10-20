@@ -7,13 +7,14 @@
 
 #define MAXLEN (1024)
 #define ever (;;)
+#define TIMEOUT (5000)
 
 int *copy_to_larger(int *array, int *size);
 
 int main() {
 	// Ask for filename
 	char filename[MAXLEN];
-	printf("*** 05. Line search ***\n\nPlease, type a file name (fewer than %d characters)\n> ", MAXLEN - 1);
+	printf("*** 06. Timed-out line search ***\n\nPlease, type a file name (fewer than %d characters)\n> ", MAXLEN - 1);
 	fgets(filename, MAXLEN - 1, stdin);
 	filename[strlen(filename) - 1] = '\0'; /* get rid of the trailing \n */
 
