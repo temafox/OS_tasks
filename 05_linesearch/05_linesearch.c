@@ -1,13 +1,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <poll.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
 
 #define MAXLEN ( 1024 )
-#define TIMEOUT ( 5000 )
 
 struct globalstruct_type {
 	char *filename;
@@ -63,7 +61,7 @@ int main() {
 		int why; // 0 - timeout, -1 - error, 1 - input
 		int num = ask_linenumber( newlines_lastchar_off_size, &why );
 
-		if( why == 0) { // will occur only in 06, 07
+		if( why == 0 ) { // will occur only in 06, 07
 			printf( "Timeout exceeded\n\n" );
 			print_all( data, file_length );
 			break;
@@ -94,7 +92,7 @@ void shutdown( int exitcode ) {
 		free( globalstruct.filename );
 	if( globalstruct.fd != -1 ) {
 		if( close( globalstruct.fd ) == -1 )
-			perror("close() failed");
+			perror( "close() failed" );
 	}
 	if( globalstruct.data != NULL )
 		free( globalstruct.data );
@@ -123,7 +121,8 @@ void process_lines( char *data, int data_size, int **newlines_lastchar_off, int 
 
 	for( int offset = 0; offset < data_size; ++offset )
 		if( data[ offset ] == '\n' )
-			if( append_elem( offset, newlines_lastchar_off, newlines_lastchar_off_size, &buffer_size, add_size ) == -1 ) {
+			if( append_elem( offset, newlines_lastchar_off, newlines_lastchar_off_size,
+						&buffer_size, add_size ) == -1 ) {
 				perror("append_elem() failed");
 				return;
 			}
@@ -218,11 +217,9 @@ char *store_file_by_read( int fd, int length ) {
 	int successfully_read = read( fd, buffer, sizeof( char ) * length );
 	if( successfully_read + 1 != sizeof( char ) * length ) {
 		perror( "read() failed" );
-		printf( "successfully_read = %d\nlength = %d", successfully_read, length );
 		free( buffer );
 		return NULL;
 	}
-	buffer[ successfully_read ] = '\0';
 
 	return buffer;
 }

@@ -125,7 +125,8 @@ void process_lines( char *data, int data_size, int **newlines_lastchar_off, int 
 
 	for( int offset = 0; offset < data_size; ++offset )
 		if( data[ offset ] == '\n' )
-			if( append_elem( offset, newlines_lastchar_off, newlines_lastchar_off_size, &buffer_size, add_size ) == -1 ) {
+			if( append_elem( offset, newlines_lastchar_off, newlines_lastchar_off_size,
+						&buffer_size, add_size ) == -1 ) {
 				perror("append_elem() failed");
 				return;
 			}
