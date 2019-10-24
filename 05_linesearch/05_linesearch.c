@@ -2,7 +2,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <poll.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -13,10 +12,10 @@
 struct globalstruct_type {
 	char *filename;
 	int fd;
-	char *mapped;
-	int mapped_length;
+	char *data;
+	int data_length;
 	int *newlines_lastchar_off; // the last is last char offset
-} globalstruct = { NULL, -1, MAP_FAILED, 0, NULL };
+} globalstruct = { NULL, -1, NULL, 0, NULL };
 
 void shutdown( int exitcode );
 char *ask_filename( int max_length );
@@ -26,9 +25,10 @@ void print_all( char *data, int size );
 void select_line( int number, char *data, int *offsets, int offsets_size, char **ptr_position, int *length );
 int append_elem( int elem, int **array, int *size, int *buffer_size, int add_size );
 int ensure_memory( int **array, int *size, int *buffer_size, int add_size );
+char *store_file_by_read( int fd, int length );
 
 int main() {
-	printf("*** 07. Line search + timeout + mmap/munmap ***\n");
+	printf("*** 05. Line search + file read ***\n");
 
 	char *filename = globalstruct.filename = ask_filename( MAXLEN );
 	if( filename == NULL ) {
@@ -41,18 +41,18 @@ int main() {
 		perror( "File open error" );
 		shutdown( EXIT_FAILURE );
 	}
-	int file_length = globalstruct.mapped_length = lseek( fd, 0, SEEK_END ) + 1;
+	int file_length = globalstruct.data_length = lseek( fd, 0, SEEK_END ) + 1;
 
-	// Task 07 peculiarity
-	char *mapped = globalstruct.mapped = mmap( NULL, file_length, PROT_READ, MAP_PRIVATE, fd, 0 );
-	if( mapped == MAP_FAILED ) {
-		perror( "mmap() failed to map the file" );
+	// Tasks 05, 06 peculiarity
+	char *data = globalstruct.data = store_file_by_read( fd, file_length );
+	if( data == NULL ) {
+		perror( "read_file() failed" );
 		shutdown( EXIT_FAILURE );
 	}
 
 	int *newlines_lastchar_off;
 	int newlines_lastchar_off_size;
-	process_lines( mapped, file_length, &newlines_lastchar_off, &newlines_lastchar_off_size );
+	process_lines( data, file_length, &newlines_lastchar_off, &newlines_lastchar_off_size );
 	globalstruct.newlines_lastchar_off = newlines_lastchar_off;
 	if( newlines_lastchar_off == NULL ) {
 		perror( "process_lines() failed, most likely because of malloc()" );
@@ -63,9 +63,9 @@ int main() {
 		int why; // 0 - timeout, -1 - error, 1 - input
 		int num = ask_linenumber( newlines_lastchar_off_size, &why );
 
-		if( why == 0) {
+		if( why == 0) { // will occur only in 06, 07
 			printf( "Timeout exceeded\n\n" );
-			print_all( mapped, file_length );
+			print_all( data, file_length );
 			break;
 		} else if( why == -1 ) {
 			perror( "ask_linenumber() failed" );
@@ -78,7 +78,7 @@ int main() {
 			else { // a valid line number, never timed-out
 				char *ptr_line;
 				int line_length;
-				select_line( num, mapped, newlines_lastchar_off,
+				select_line( num, data, newlines_lastchar_off,
 					       	newlines_lastchar_off_size, &ptr_line, &line_length );
 				write( /*stdout*/ 1, ptr_line, line_length );
 				write( 1, "\n", 1 );
@@ -96,10 +96,8 @@ void shutdown( int exitcode ) {
 		if( close( globalstruct.fd ) == -1 )
 			perror("close() failed");
 	}
-	if( globalstruct.mapped != MAP_FAILED ) {
-		if( munmap( globalstruct.mapped, globalstruct.mapped_length ) == -1 ) 
-			perror("munmap() failed");
-	}
+	if( globalstruct.data != NULL )
+		free( globalstruct.data );
 	if( globalstruct.newlines_lastchar_off != NULL )
 		free( globalstruct.newlines_lastchar_off );
 	exit( exitcode );
@@ -133,23 +131,18 @@ void process_lines( char *data, int data_size, int **newlines_lastchar_off, int 
 		perror("append_elem() failed");
 }
 
+// implementation specific to 05
 int ask_linenumber( int max_linenumber, int *why_returned ) {
-	struct pollfd fds;
-	fds.fd = 0; // stdin
-	fds.events = POLLIN;
-
 	int num;
 
 	printf( "Type a line number 1-%d (or 0 to quit)\n> ", max_linenumber );
-	fflush( stdout );
-
-	*why_returned = poll( &fds, 1, TIMEOUT );
-	if( *why_returned == 1 )
-		scanf("%d", &num);
-	else
-		num = -1;
-
-	return num;
+	if( scanf( "%d", &num ) == 1 ) {
+		*why_returned = 1;
+		return num;
+	} else {
+		*why_returned = -1;
+		return 0;
+	}
 }
 
 void print_all( char *data, int size ) {
@@ -212,4 +205,24 @@ int ensure_memory( int **array, int *size, int *buffer_size, int add_size ) {
 		*buffer_size += add_size;
 	}
 	return 0;
+}
+
+char *store_file_by_read( int fd, int length ) {
+	char *buffer = ( char * )malloc( sizeof( char ) * length );
+	if( buffer == NULL ) {
+		perror( "malloc() failed" );
+		return NULL;
+	}
+
+	lseek( fd, 0, SEEK_SET );
+	int successfully_read = read( fd, buffer, sizeof( char ) * length );
+	if( successfully_read + 1 != sizeof( char ) * length ) {
+		perror( "read() failed" );
+		printf( "successfully_read = %d\nlength = %d", successfully_read, length );
+		free( buffer );
+		return NULL;
+	}
+	buffer[ successfully_read ] = '\0';
+
+	return buffer;
 }
