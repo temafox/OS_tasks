@@ -7,7 +7,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#define MAXLEN ( 1024 )
+#define MAXSTRLEN ( 1024 )
 #define TIMEOUT ( 5000 )
 
 struct globalstruct_type {
@@ -30,7 +30,7 @@ int ensure_memory( int **array, int *size, int *buffer_size, int add_size );
 int main() {
 	printf("*** 07. Line search + timeout + mmap/munmap ***\n");
 
-	char *filename = globalstruct.filename = ask_filename( MAXLEN );
+	char *filename = globalstruct.filename = ask_filename( MAXSTRLEN );
 	if( filename == NULL ) {
 		perror( "ask_filename() failed memory allocation" );
 		shutdown( EXIT_FAILURE );
@@ -92,13 +92,13 @@ int main() {
 void shutdown( int exitcode ) {
 	if( globalstruct.filename != NULL )
 		free( globalstruct.filename );
-	if( globalstruct.fd != -1 ) {
-		if( close( globalstruct.fd ) == -1 )
-			perror("close() failed");
-	}
 	if( globalstruct.mapped != MAP_FAILED ) {
 		if( munmap( globalstruct.mapped, globalstruct.mapped_length ) == -1 ) 
 			perror("munmap() failed");
+	}
+	if( globalstruct.fd != -1 ) {
+		if( close( globalstruct.fd ) == -1 )
+			perror("close() failed");
 	}
 	if( globalstruct.newlines_lastchar_off != NULL )
 		free( globalstruct.newlines_lastchar_off );
