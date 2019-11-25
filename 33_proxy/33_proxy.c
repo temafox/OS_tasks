@@ -27,26 +27,22 @@ int main( int argc, char **argv ) {
 	char *dst_port_name	= argv[ 3 ];
 
 	if( parse_argv( argc, argv,
-			&src_port, &dst_port ) == -1 ) {
+				&src_port, &dst_port ) == -1 ) {
 		print_usage_stderr( program_call_name );
 		exit_abortmsg();
 	}
 
 	struct addrinfo *destination;
-	int resolve_return = resolve_host_tcp_ipv4( dst_ip_name, dst_port_name, &destination );
-	switch( resolve_return ) {
-		case 0:
-			print_server_settings( src_port, dst_ip_name, dst_port, destination );
-			break;
-		case EAI_SYSTEM:
+	int resolve_error = resolve_host_tcp_ipv4( dst_ip_name, dst_port_name, &destination );
+	if( resolve_error ) {
+		if( resolve_error == EAI_SYSTEM )
 			perror( "A system error while resolving host" );
-			break;
-		default:
-			fprintf( stderr, "%s\n", gai_strerror( resolve_return ) );
-	}
-	if( resolve_return != 0 )
+		else
+			fprintf( stderr, "%s\n", gai_strerror( resolve_error ) );
 		exit_abortmsg();
-	
+	}
+	print_server_settings( src_port, dst_ip_name, dst_port, destination );
+
 	int listener = socket( AF_INET, SOCK_STREAM, 0 );
 	if( listener == -1 ) {
 		perror( "Unable to create a listener socket" );
@@ -80,7 +76,7 @@ int main( int argc, char **argv ) {
 
 	// There will always be the one listening socket, so it does not count
 	int nclients = 0;
-	
+
 	// #0 is the listening connection
 	address_info[ 0 ] = listener_addr;
 	pollfds[ 0 ].fd = listener;
@@ -103,6 +99,8 @@ int main( int argc, char **argv ) {
 
 			// Existing connections have changed state
 			for( int i = 1; i <= 2 * nclients; ++i ) {
+				// remotes' numbers are even, client = dest - 1
+				// clients' numbers are odd, dest = client + 1
 				int src = i, dst = ( i%2 == 0 ? i-1 : i+1 );
 
 				if( pollfds[ src ].revents & POLLIN ) {
@@ -110,7 +108,7 @@ int main( int argc, char **argv ) {
 								&( address_info[ src ] ) ) == -1 )
 						disconnect_pair( src, pollfds, address_info, &nclients );
 					else if( pollfds[ src ].revents & POLLIN )
-						resend_data_print_errors( pollfds, src, dst );
+						transmit_data_print_errors( pollfds, src, dst );
 				}
 			}
 		}
