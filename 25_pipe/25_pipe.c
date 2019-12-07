@@ -1,8 +1,10 @@
+#include <bits/types/siginfo_t.h>
 #include <ctype.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <sys/wait.h>
 
 #define PARBUFSIZE ( 10 )
 #define CHIBUFSIZE ( 10 )
@@ -76,8 +78,12 @@ int main() {
 		close( pipefd[ 0 ] );
 		close( pipefd[ 1 ] );
 	}
-	else if( iamparent )
-		return parent( pipefd );
+	else if( iamparent ) {
+		int parentreturn = parent( pipefd );
+		siginfo_t childreturn;
+	        waitid( P_PID, iamparent, &childreturn, WEXITED  );
+		return parentreturn + childreturn.si_status;
+	}
 	else
 		return child( pipefd );
 }
