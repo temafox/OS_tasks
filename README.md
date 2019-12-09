@@ -11,8 +11,9 @@ Currently completed tasks:
 09. Fork
 10. Print exitcode
 11. An implementation of execvpe
-25) Interprocess communication with pipe(2)
-26) Interprocess communication with popen(3)
-27) Empty lines count with pipes
-28) Randomizer
-33. Proxy server
+21) SIGINT beeper
+25. Interprocess communication with pipe(2)
+26. Interprocess communication with popen(3)
+27. Empty lines count with pipes
+28. Randomizer
+33) Proxy server
