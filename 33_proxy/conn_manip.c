@@ -4,9 +4,28 @@
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #include "defines.h"
 #include "conn_manip.h"
+
+int complete_connection_make_blocking( int one_of_pair, struct pollfd *pollfds) {
+	int clientid = ( one_of_pair%2 == 0 ? one_of_pair/2 : ( one_of_pair + 1 )/2 );
+	int remoteindex = clientid * 2;
+
+	pollfds[ remoteindex ].events &= ~POLLOUT;
+
+	int status = fcntl( pollfds[ remoteindex + 1 ].fd, F_SETFL, fcntl( pollfds[ remoteindex ].fd, F_GETFL, 0 ) & ~O_NONBLOCK );
+	if( status == -1 ) {
+		perror( "fcntl() failure" );
+		return -1;
+	}
+
+	printf( "Connection #%d is established\n", clientid );
+
+	return 0;
+}
 
 int add_connection( struct pollfd *pollfds, struct sockaddr_in *address_info, int *nclients, struct addrinfo const *dest ) {
 	// If we have MAX_CLIENTS clients, let pending
@@ -30,7 +49,8 @@ int add_connection( struct pollfd *pollfds, struct sockaddr_in *address_info, in
 	}
 
 	pollrecord_dest->fd = socket( AF_INET, SOCK_STREAM, 0 );
-	pollrecord_dest->events = POLLIN;
+	pollrecord_dest->events = POLLIN | POLLOUT; // POLLOUT will be helpful when we await
+	                                            // the connection to be fully established
 	if( pollrecord_dest->fd == -1 ) {
 		perror( "Error while creating a socket for the destination" );
 		close( pollrecord_client->fd );
@@ -38,17 +58,32 @@ int add_connection( struct pollfd *pollfds, struct sockaddr_in *address_info, in
 	}
 
 	*addrinfo_dest = *( struct sockaddr_in * )( dest->ai_addr );
-	if( connect( pollrecord_dest->fd,
-			( struct sockaddr * )addrinfo_dest, addr_len ) == -1 ) {
-		perror( "Error while connecting to the destination" );
+	// Make the remote connection socket non-blocking till it connects
+	int status = fcntl( pollrecord_dest->fd, F_SETFL, fcntl( pollrecord_dest->fd, F_GETFL, 0 ) | O_NONBLOCK );
+	if( status == -1 ) {
+		perror( "fcntl() failure" );
 		close( pollrecord_client->fd );
 		close( pollrecord_dest->fd );
 		return -1;
 	}
 
+	if( connect( pollrecord_dest->fd,
+			( struct sockaddr * )addrinfo_dest, addr_len ) == -1 ) {
+		if( errno == EINPROGRESS ) {
+			printf( "Client #%d is being connected on port %d......\n",
+					*nclients + 1, addrinfo_client->sin_port );
+		} else {
+			perror( "Error while connecting to the destination" );
+			close( pollrecord_client->fd );
+			close( pollrecord_dest->fd );
+			return -1;
+		}
+	} else {
+		printf( "Client #%d's connection established on port %d\n",
+			*nclients + 1, addrinfo_client->sin_port );
+	}
+
 	++( *nclients );
-	printf( "Client #%d connected on port %d\n",
-			*nclients, addrinfo_client->sin_port );
 	return 0;
 }
 
@@ -56,11 +91,11 @@ int has_errors_print( struct pollfd const *pollfd, int number, struct sockaddr_i
 	number = ( number%2 == 0 ? number/2 : ( number + 1 )/2 );
 
 	if( pollfd->revents & POLLHUP )
-		fprintf( stderr, "Client #%d hang up on port %d\n", number, address_info->sin_port );
+		fprintf( stderr, "Connection #%d hang up on port %d\n", number, address_info->sin_port );
 	else if( pollfd->revents & POLLNVAL )
-		fprintf( stderr, "Client #%d invalid request on port %d\n", number, address_info->sin_port );
+		fprintf( stderr, "Connection #%d invalid request on port %d\n", number, address_info->sin_port );
 	else if( pollfd->revents & POLLERR )
-		fprintf( stderr, "Client #%d error on port %d\n", number, address_info->sin_port );
+		fprintf( stderr, "Connection #%d error on port %d\n", number, address_info->sin_port );
 	else
 		return 0;
 
@@ -148,6 +183,46 @@ int disconnect_pair( int one_of_pair, struct pollfd *pollfds, struct sockaddr_in
 
 		address_info[ client ] = address_info[ 2 * *nclients - 1 ];
 		address_info[ remote ] = address_info[ 2 * *nclients ];
+
+		printf( "Client #%d moved to #%d\n", *nclients, clientid );
+
+		--( *nclients );
+	}
+
+	return retval;
+}
+
+int disconnect_client( int one_of_pair, struct pollfd *pollfds, struct sockaddr_in *address_info, int *nclients ) {
+	int retval = 0;
+
+	int client;
+	int clientid;
+	
+	if( one_of_pair % 2 == 0 )
+		client = one_of_pair - 1;
+	else
+		client = one_of_pair;
+	clientid = ( client + 1 ) / 2;
+	
+	if( close( pollfds[ client ].fd ) == -1 ) {
+		perror( "Closing failure on client connection" );
+		retval = -1;
+	}
+
+	printf( "Client #%d on port %d disconnected\n",
+		clientid, address_info[ client ].sin_port );
+	
+	if( *nclients == 1 || clientid == *nclients )
+		--( *nclients );
+	else {
+		// There would be a hole in the array of clients,
+		// but we move the last client to make up for it
+		
+		pollfds[ client ] = pollfds[ 2 * *nclients - 1 ];
+		pollfds[ client + 1 ] = pollfds[ 2 * *nclients ];
+
+		address_info[ client ] = address_info[ 2 * *nclients - 1 ];
+		address_info[ client + 1 ] = address_info[ 2 * *nclients ];
 
 		printf( "Client #%d moved to #%d\n", *nclients, clientid );
 

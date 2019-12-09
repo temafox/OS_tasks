@@ -92,6 +92,7 @@ int main( int argc, char **argv ) {
 			perror( "Error during a poll() call" );
 		} else {
 			// There is a connection to accept
+			// By the way, here we put it in non-blocking mode
 			if( pollfds[ 0 ].revents & POLLIN ) {
 				add_connection( pollfds, address_info, &nclients, destination );
 				continue;
@@ -102,6 +103,14 @@ int main( int argc, char **argv ) {
 				// remotes' numbers are even, client = dest - 1
 				// clients' numbers are odd, dest = client + 1
 				int src = i, dst = ( i%2 == 0 ? i-1 : i+1 );
+
+				// A connection in progress has been established
+				if( i % 2 == 0 && pollfds[ i ].revents & POLLOUT ) {
+					int completion = complete_connection_make_blocking( i, pollfds );
+					if( completion == -1 )
+						disconnect_client( i, pollfds, address_info, &nclients );
+					continue;
+				}
 
 				if( pollfds[ src ].revents & POLLIN ) {
 					if( has_errors_print( &( pollfds[ src ] ), src,
