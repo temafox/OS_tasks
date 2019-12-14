@@ -18,7 +18,7 @@ int main( int argc, char** argv ) {
 		exit( EXIT_FAILURE );
 	}
 
-	sprintf( command, "grep -E \"^$\" %s | wc -l", filename );
+	sprintf( command, "set -o pipefail ; grep -E '^$' %s | wc -l", filename );
 
 	FILE *sh = popen( command, "r" );
 	if( sh == NULL ) {
@@ -30,8 +30,17 @@ int main( int argc, char** argv ) {
 
 	int empty_lines;
 	fscanf( sh, "%d", &empty_lines );
-	printf( "%s contains %d empty lines\n", filename, empty_lines );
+
+	int shstatus = pclose( sh );
+	if( shstatus == -1 )
+		perror( "pclose() error\n" );
+	else if( !WIFEXITED( shstatus ) )
+		fprintf( stderr, "Abnormal termination of shell\n" );
+	else if( WEXITSTATUS( shstatus ) > 1 )
+		fprintf( stderr, "Shell returned an error\n" );
+	else // Everything OK _or_ grep returned 1 = no empty lines
+		printf( "%d empty lines in %s\n", empty_lines, filename );
 
 	free( command );
-	exit( pclose( sh ) );
+	exit( EXIT_SUCCESS );
 }
