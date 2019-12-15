@@ -3,23 +3,17 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <unistd.h>
+#include <sys/select.h>
 
-int sigint_count = 0;
+int sigpipe[ 2 ];
 
 void sigint_handler( int sigint ) {
-	write( STDOUT_FILENO, "\a", sizeof( char ) * 2 );
-	++sigint_count;
+	write( STDOUT_FILENO, "!", sizeof( char ) * 2 );
+	write( sigpipe[ 1 ], "I", 1 );
 }
 
 void sigquit_handler( int sigquit ) {
-	char msg[50] = "\nSIGINT has been received 00000 times\n";
-	for( int i = 30; i >= 26; --i ) {
-		msg[ i ] = '0' + sigint_count % 10;
-		sigint_count /= 10;
-	}
-
-	write( STDOUT_FILENO, msg, sizeof( char ) * 38 );
-	exit( EXIT_FAILURE );
+	write( sigpipe[ 1 ], "Q", 1 );
 }
 
 int main() {
@@ -40,5 +34,28 @@ int main() {
 
 	sigaction( SIGQUIT, &sigquit_action, NULL );
 
-	while( 1 );
+	/////////////////////////////////////////////////
+
+	pipe( sigpipe );
+
+	fd_set readfds;
+	FD_ZERO( &readfds );
+	FD_SET( sigpipe[ 0 ], &readfds );
+
+	int sigint_count = 0;
+
+	while( 1 ) {
+		select( 1, &readfds, NULL, NULL, NULL );
+		
+		char c;
+		read( sigpipe[ 0 ], &c, 1 );
+
+		switch( c ) {
+			case 'I': ++sigint_count;
+				  break;
+			case 'Q': printf( "SIGINT has been received %d times\n", sigint_count );
+				  exit( EXIT_SUCCESS );
+			default: exit( EXIT_FAILURE );
+		}
+	}
 }
