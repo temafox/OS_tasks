@@ -18,7 +18,7 @@ int main( int argc, char** argv ) {
 		exit( EXIT_FAILURE );
 	}
 
-	sprintf( command, "set -o pipefail ; grep -E '^$' %s | wc -l", filename );
+	snprintf( command, command_size, "set -o pipefail ; grep -E '^$' \"%s\" | wc -l", filename );
 
 	FILE *sh = popen( command, "r" );
 	if( sh == NULL ) {
