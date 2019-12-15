@@ -6,40 +6,51 @@
 
 #define CHILDCOUNT_MAX ( 5 )
 
-int childpids[ CHILDCOUNT_MAX ];
-FILE *childfps[ CHILDCOUNT_MAX ][ 2 ];
-int childfds[ CHILDCOUNT_MAX ][ 2 ];
+struct child_p2open_record {
+	int pid;
+	FILE *fp[ 2 ];
+};
+
+struct child_p2open_record children_p2opened[ CHILDCOUNT_MAX ];
 int childcount = 0;
 
-int p2open( const char *cmd, FILE *fp[2] );
+int close_pair( int fd[ 2 ] );
+
+int add_child_to_array();
+int remove_child_from_array( int index );
+int locate_child( FILE *fp[ 2 ] );
+
+int p2open( const char *cmd, FILE *fp[ 2 ] );
 int p2close( FILE *fp[2] );
 
 int main() {
-	FILE *filep[ 2 ];
-	if( p2open( "sort", filep ) == -1 ) {
+	FILE *fp[ 2 ];
+	if( p2open( "sort -n", fp ) == -1 ) {
 		fprintf( stderr, "p2open() failed\n" );
 		exit( EXIT_FAILURE );
 	}
-	FILE *tosort = filep[ 0 ];
-	FILE *fromsort = filep[ 1 ];
+	FILE *tosort = fp[ 0 ];
+	FILE *fromsort = fp[ 1 ];
 
 	srand( time( NULL ) );
-	for( int i = 1; i <= 100; ++i ) {
+	for( int i = 0; i < 100; ++i ) {
 		int randint = rand() % 100; // 0..99
 		fprintf( tosort, "%d\n", randint );
+		fflush( tosort );
 	}
 
-	for( int i = 1; i <= 100; ++i ) {
-		int sortedint;
-		fscanf( fromsort, "%d\n", &sortedint );
-		printf( "%3d", sortedint );
-		if( i % 10 == 0 )
-			printf( "\n" );
-	}
+	int sortedint[ 100 ];
+	for( int i = 0; i < 100; ++i )
+		fscanf( fromsort, "%d", sortedint + i );
 
-	if( p2close( filep ) == -1 ) {
+	if( p2close( fp ) == -1 ) {
 		fprintf( stderr, "p2close() failed\n" );
 		exit( EXIT_FAILURE );
+	}
+
+	for( int i = 0; i < 100; ++i ) {
+		printf( "%2d ", sortedint[ i ] );
+		printf( (i+1) % 10 == 0 ? "\n" : " " );
 	}
 	exit( EXIT_SUCCESS );
 }
@@ -50,103 +61,125 @@ int p2open( const char *cmd, FILE *fp[2] ) {
 		return -1;
 	}
 
-	int tochildfd[2], fromchildfd[2];
-	int pipeerr_to, pipeerr_from;
-	pipeerr_to = pipe( tochildfd );
-	if( pipeerr_to == -1 ) {
-		perror( "pipe() failure" );
+	int parent_child_fd[ 2 ], child_parent_fd[ 2 ];
+	if( pipe( parent_child_fd ) == -1 ) {
+		perror( "pipe() failed for parent-to-child IPC" );
 		return -1;
 	}
-
-	pipeerr_from = pipe( fromchildfd );
-	if( pipeerr_from == -1 ) {
-		perror( "pipe() failure" );
-		close( tochildfd[ 0 ] );
-		close( tochildfd[ 1 ] );
+	if( pipe( child_parent_fd ) == -1 ) {
+		perror( "pipe() failed for child-to-parent IPC" );
+		close_pair( parent_child_fd );
 		return -1;
 	}
 
 	int childpid = fork();
 	if( childpid == -1 ) {
 		perror( "fork() failure" );
+		close_pair( parent_child_fd );
+		close_pair( child_parent_fd );
 		return -1;
-	} else if( childpid ) { // parent
-		close( tochildfd[ 0 ] );
-		close( fromchildfd[ 1 ] );
+	} else if( childpid == 0 ) { // child
+		close( STDIN_FILENO );
+		dup2( parent_child_fd[ 0 ], STDIN_FILENO );
 
-		FILE *fp_res[ 2 ];
-		fp_res[ 0 ] = fdopen( tochildfd[ 1 ], "w" );
-		fp_res[ 1 ] = fdopen( fromchildfd[ 0 ], "r" );
-		if( fp_res[ 0 ] == NULL
-		    || fp_res[ 1 ] == NULL ) {
-			perror( "fdopen() failure" );
-			fclose( fp_res[ 0 ] );
-			fclose( fp_res[ 1 ] );
-			close( tochildfd[ 1 ] );
-			close( fromchildfd[ 0 ] );
+		close( STDOUT_FILENO );
+		dup2( child_parent_fd[ 1 ], STDOUT_FILENO );
+
+		close_pair( parent_child_fd );
+		close_pair( child_parent_fd );
+
+		execl( "/bin/sh", "sh", "-c", cmd, ( char * )0 );
+		perror( "execl() failure" );
+		return -1;
+	} else { // parent
+		FILE *result_fp[ 2 ];
+		result_fp[ 0 ] = fdopen( parent_child_fd[ 1 ], "w" );
+		if( result_fp[ 0 ] == NULL ) {
+			perror( "fdopen() failure for parent-to-child IPC" );
+			close_pair( parent_child_fd );
+			close_pair( child_parent_fd );
 			return -1;
 		}
 
-		close( tochildfd[ 1 ] );
-		close( fromchildfd[ 0 ] );
+		result_fp[ 1 ] = fdopen( child_parent_fd[ 0 ], "r" );
+		if( result_fp[ 1 ] == NULL ) {
+			perror( "fdopen() failure for parent-to-child IPC" );
+			fclose( result_fp[ 0 ] );
+			close_pair( parent_child_fd );
+			close_pair( child_parent_fd );
+			return -1;
+		}
 
-		childpids[ childcount ] = childpid;
+		close_pair( parent_child_fd );
+		close_pair( child_parent_fd );
 
-		childfps[ childcount ][ 0 ] = fp_res[ 0 ];
-		childfps[ childcount ][ 1 ] = fp_res[ 1 ];
+		int childindex = add_child_to_array();
+		children_p2opened[ childindex ].pid = childpid;
+		children_p2opened[ childindex ].fp[ 0 ] = result_fp[ 0 ];
+		children_p2opened[ childindex ].fp[ 1 ] = result_fp[ 1 ];
 
-		childfds[ childcount ][ 0 ] = tochildfd[ 1 ];
-		childfds[ childcount ][ 1 ] = fromchildfd[ 0 ];
-
-		++childcount;
-
-		fp[ 0 ] = fp_res[ 0 ];
-		fp[ 1 ] = fp_res[ 1 ];
+		fp[ 0 ] = result_fp[ 0 ];
+		fp[ 1 ] = result_fp[ 1 ];
 		return 0;
-	} else { // child
-		close( tochildfd[ 1 ] );
-		close( fromchildfd[ 0 ] );
-
-		close( STDIN_FILENO );
-		dup2( tochildfd[ 0 ], STDIN_FILENO );
-
-		close( STDOUT_FILENO );
-		dup2( fromchildfd[ 1 ], STDOUT_FILENO );
-
-		execlp( cmd, cmd, ( char * )NULL );
-
-		perror( "execlp() failure" );
-		return -1;
 	}
 }
 
-int p2close( FILE *fp[2] ) {
-	int index = -1;
-	for( int i = 0; i < childcount; ++i ) {
-		if( childfps[ i ][ 0 ] == fp[ 0 ] ) {
-			index = i;
-			break;
-		}
-	}
-	if( index == -1 ) {
-		fprintf( stderr, "FILE *s not found\n" );
+int p2close( FILE *fp[ 2 ] ) {
+	int childindex = locate_child( fp );
+	if( childindex == -1 ) {
+		fprintf( stderr, "No child works with these streams\n" );
 		return -1;
 	}
 
-	if( childfps[ index ][ 1 ] != fp[ 1 ] ) {
-		fprintf( stderr, "Broken FILE * pair\n" );
+	fclose( children_p2opened[ childindex ].fp[ 0 ] );
+	fclose( children_p2opened[ childindex ].fp[ 1 ] );
+
+	int childstatus;
+	waitpid( children_p2opened[ childindex ].pid, &childstatus, 0 );
+
+	remove_child_from_array( childindex );
+
+	return childstatus;
+}
+
+int add_child_to_array() {
+	if( childcount == CHILDCOUNT_MAX )
 		return -1;
+
+	++childcount;
+	return childcount - 1; // index of the new child
+}
+
+int remove_child_from_array( int index ) {
+	if( childcount == 0 )
+		return -1;
+	if( index < 0 || index > childcount - 1 )
+		return -1;
+
+	if( index < childcount - 1 ) {
+		children_p2opened[ index ].pid = children_p2opened[ childcount - 1 ].pid;
+		children_p2opened[ index ].fp[ 0 ] = children_p2opened[ childcount - 1 ].fp[ 0 ];
+		children_p2opened[ index ].fp[ 1 ] = children_p2opened[ childcount - 1 ].fp[ 1 ];
 	}
-
-	fclose( childfps[ index ][ 0 ] );
-	fclose( childfps[ index ][ 1 ] );
-
-	//close( childfds[ index ][ 0 ] );
-	//close( childfds[ index ][ 1 ] );
-
-	waitpid( childpids[ index ], NULL, 0 );
-	childpids[ index ] = childpids[ childcount - 1 ];
 
 	--childcount;
-	return 0;
+	return childcount;
 }
+
+int locate_child( FILE *fp[ 2 ] ) {
+	for( int i = 0; i < childcount; ++i )
+		if( children_p2opened[ i ].fp[ 0 ] == fp[ 0 ]
+		    && children_p2opened[ i ].fp[ 1 ] == fp[ 1 ] )
+				return i;
+	
+	return -1;
+}
+ int close_pair( int fd[ 2 ] ) {
+	int zeroth_status = close( fd[ 0 ] );
+	int first_status  = close( fd[ 1 ] );
+
+	if( zeroth_status == -1 || first_status == -1 )
+		return -1;
+	else
+		return 0;
+ }
